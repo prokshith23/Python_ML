@@ -1,0 +1,228 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import RandomForestRegressor
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+
+
+
+# 1) LOAD DATA
+
+
+df = pd.read_csv(r"C:\Downloads\archive (1)\smart_traffic_management_dataset.csv")
+df["timestamp"] = pd.to_datetime(df["timestamp"])
+df = df.sort_values("timestamp")
+
+features = [
+    "traffic_volume",
+    "avg_vehicle_speed",
+    "vehicle_count_cars",
+    "vehicle_count_trucks",
+    "vehicle_count_bikes",
+    "temperature",
+    "humidity",
+    "accident_reported"
+]
+
+target = "traffic_volume"
+
+X = df[features]
+y = df[target]
+
+
+# 2) TRAIN–TEST SPLIT
+
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, shuffle=False
+)
+
+# 3) RANDOM FOREST MODEL
+
+rf = RandomForestRegressor(
+    n_estimators=300,
+    max_depth=15,
+    random_state=42
+)
+
+rf.fit(X_train, y_train)
+
+rf_train_pred = rf.predict(X_train)
+rf_test_pred = rf.predict(X_test)
+
+
+
+# METRIC FUNCTION
+
+
+def compute_metrics(y_true, y_pred, title=""):
+    mae = mean_absolute_error(y_true, y_pred)
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_true, y_pred)
+
+    print(f"\n----- {title} -----")
+    print("MAE :", mae)
+    print("MSE :", mse)
+    print("RMSE:", rmse)
+    print("R²  :", r2)
+
+    return mae, mse, rmse, r2
+
+
+print("\n📌 HOW ERRORS ARE CALCULATED")
+print("MAE  = average absolute error")
+print("MSE  = average squared error")
+print("RMSE = sqrt(MSE)")
+print("R²   = variance explained\n")
+
+
+
+# RANDOM FOREST METRICS
+
+
+rf_train_mae, rf_train_mse, rf_train_rmse, rf_train_r2 = compute_metrics(
+    y_train, rf_train_pred, "Random Forest – TRAIN"
+)
+
+rf_test_mae, rf_test_mse, rf_test_rmse, rf_test_r2 = compute_metrics(
+    y_test, rf_test_pred, "Random Forest – TEST"
+)
+
+
+
+# RANDOM FOREST PLOTS
+
+
+plt.figure(figsize=(12,5))
+plt.plot(y_train.values, label="Actual Train")
+plt.plot(rf_train_pred, label="RF Predicted Train")
+plt.title("Random Forest - Train Prediction")
+plt.legend()
+plt.show()
+
+plt.figure(figsize=(12,5))
+plt.plot(y_test.values, label="Actual Test")
+plt.plot(rf_test_pred, label="RF Predicted Test")
+plt.title("Random Forest - Test Prediction")
+plt.legend()
+plt.show()
+
+plt.figure(figsize=(8,4))
+plt.hist(y_test.values - rf_test_pred, bins=30)
+plt.title("Random Forest - Error Distribution")
+plt.xlabel("Error")
+plt.ylabel("Frequency")
+plt.show()
+
+plt.figure(figsize=(10,5))
+importances = rf.feature_importances_
+plt.bar(features, importances)
+plt.xticks(rotation=45)
+plt.title("Random Forest - Feature Importance")
+plt.show()
+
+
+
+# 4) LSTM DATA PREPARATION
+
+
+scaler = MinMaxScaler()
+scaled_data = scaler.fit_transform(df[features])
+
+def create_sequences(data, seq_len=10):
+    Xs, ys = [], []
+    for i in range(seq_len, len(data)):
+        Xs.append(data[i-seq_len:i])
+        ys.append(data[i, 0])  # traffic_volume (scaled)
+    return np.array(Xs), np.array(ys)
+
+SEQ_LEN = 10
+X_lstm, y_lstm = create_sequences(scaled_data, SEQ_LEN)
+
+split = int(0.8 * len(X_lstm))
+
+X_lstm_train = X_lstm[:split]
+X_lstm_test = X_lstm[split:]
+y_lstm_train = y_lstm[:split]
+y_lstm_test = y_lstm[split:]
+
+
+
+# 5) LSTM MODEL
+
+
+model = Sequential([
+    tf.keras.Input(shape=(X_lstm.shape[1], X_lstm.shape[2])),
+    LSTM(64, return_sequences=True),
+    Dropout(0.2),
+    LSTM(32),
+    Dropout(0.2),
+    Dense(1)
+])
+
+model.compile(optimizer="adam", loss="mse")
+
+history = model.fit(
+    X_lstm_train, y_lstm_train,
+    epochs=20,
+    batch_size=32,
+    validation_split=0.1,
+    verbose=1
+)
+
+
+# LSTM PREDICTIONS & METRICS
+
+
+lstm_train_pred = model.predict(X_lstm_train).reshape(-1)
+lstm_test_pred = model.predict(X_lstm_test).reshape(-1)
+
+compute_metrics(y_lstm_train, lstm_train_pred, "LSTM – TRAIN")
+compute_metrics(y_lstm_test, lstm_test_pred, "LSTM – TEST")
+
+# LSTM PLOTS
+
+
+plt.figure(figsize=(10,5))
+plt.plot(history.history['loss'], label="Train Loss")
+plt.plot(history.history['val_loss'], label="Validation Loss")
+plt.title("LSTM Loss Curve")
+plt.legend()
+plt.show()
+
+plt.figure(figsize=(12,5))
+plt.plot(y_lstm_train, label="Actual Train")
+plt.plot(lstm_train_pred, label="Predicted Train")
+plt.title("LSTM Train Prediction")
+plt.legend()
+plt.show()
+
+plt.figure(figsize=(12,5))
+plt.plot(y_lstm_test, label="Actual Test")
+plt.plot(lstm_test_pred, label="Predicted Test")
+plt.title("LSTM Test Prediction")
+plt.legend()
+plt.show()
+
+plt.figure(figsize=(8,4))
+plt.hist(y_lstm_test - lstm_test_pred, bins=30)
+plt.title("LSTM - Error Distribution")
+plt.xlabel("Error")
+plt.ylabel("Frequency")
+plt.show()
+
+
+# FINAL SUMMARY
+
+print("✔ MODEL TRAINING COMPLETE")
+print("✔ Random Forest + LSTM successfully trained")
+print("✔ Training & Testing Accuracy calculated")
+print("✔ All MAE, MSE, RMSE, R² generated")
+print("✔ Loss curve + prediction graphs created")
+
